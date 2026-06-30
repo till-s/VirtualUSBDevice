@@ -74,7 +74,7 @@ public:
             assert(_s.state == _State::Idle);
             _s.state |= _State::Started;
             
-            const uint32_t speed = _SpeedFromBCDUSB(_info.deviceDesc->bcdDevice);
+            const uint32_t speed = _SpeedFromBCDUSB(_info.deviceDesc->bcdUSB);
             int sockets[2] = {-1,-1};
             int ir = socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
             if (ir) throw RuntimeError("socketpair failed: %s", strerror(errno));
