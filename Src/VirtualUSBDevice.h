@@ -531,7 +531,13 @@ private:
         
         // Otherwise, handle as a regular endpoint command
         } else {
-            auto xfer = _handleCmdSubmitEPX(cmd);
+	    std::optional<Xfer> xfer;
+            if ( USBIPLib::USBIP_DIR_OUT == cmd.header.base.direction ) {
+                xfer = _handleCmdSubmitEPX(cmd);
+	    } else {
+		_handleCmdSubmitEPX(cmd);
+		xfer = Xfer();
+	    }
             // Populate the setupReq member, since it's always expected for ep==0
             if (xfer) xfer->setupReq = setupReq;
             return xfer;
