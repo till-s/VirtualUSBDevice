@@ -2,6 +2,14 @@
 #include "Toastbox/Endian.h"
 #include "Toastbox/USB.h"
 
+
+namespace Endpoint {
+    constexpr uint8_t In1    = 0x81;
+    constexpr uint8_t Out2   = 0x02;
+    constexpr uint8_t In3    = 0x83;
+    constexpr uint8_t Out4   = 0x04;
+} // namespace Endpoint
+
 namespace Descriptor {
 
 using namespace Toastbox;
@@ -72,7 +80,7 @@ constexpr Configuration Configuration = {
             .epIn1Desc = {
                 .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
                 .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
-                .bEndpointAddress       = LFH_U8(0x81),
+                .bEndpointAddress       = LFH_U8(Endpoint::In1),
                 .bmAttributes           = LFH_U8(0x02),
                 .wMaxPacketSize         = LFH_U16(0x0200),
                 .bInterval              = LFH_U8(0x00),
@@ -81,7 +89,7 @@ constexpr Configuration Configuration = {
             .epOut2Desc = {
                 .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
                 .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
-                .bEndpointAddress       = LFH_U8(0x02),
+                .bEndpointAddress       = LFH_U8(Endpoint::Out2),
                 .bmAttributes           = LFH_U8(0x02),
                 .wMaxPacketSize         = LFH_U16(0x0200),
                 .bInterval              = LFH_U8(0x00),
@@ -100,7 +108,7 @@ constexpr Configuration Configuration = {
             .epIn3Desc = {
                 .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
                 .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
-                .bEndpointAddress       = LFH_U8(0x83),
+                .bEndpointAddress       = LFH_U8(Endpoint::In3),
                 .bmAttributes           = LFH_U8(0x02),
                 .wMaxPacketSize         = LFH_U16(0x0200),
                 .bInterval              = LFH_U8(0x00),
@@ -109,7 +117,7 @@ constexpr Configuration Configuration = {
             .epOut4Desc = {
                 .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
                 .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
-                .bEndpointAddress       = LFH_U8(0x04),
+                .bEndpointAddress       = LFH_U8(Endpoint::Out4),
                 .bmAttributes           = LFH_U8(0x02),
                 .wMaxPacketSize         = LFH_U16(0x0200),
                 .bInterval              = LFH_U8(0x00),
@@ -135,10 +143,3 @@ const USB::StringDescriptor* Strings[] = {
 };
 
 } // namespace Descriptor
-
-namespace Endpoint {
-    constexpr uint8_t In1    = 0x81;
-    constexpr uint8_t Out2   = 0x02;
-    constexpr uint8_t In3    = 0x83;
-    constexpr uint8_t Out4   = 0x04;
-} // namespace Endpoint
