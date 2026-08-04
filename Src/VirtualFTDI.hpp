@@ -17,6 +17,7 @@ public:
 	virtual ~FTInterface() = default;
 };
 
+class JtagAna;
 
 class VirtualFTDI : public VirtualUSBDevice {
 
@@ -29,6 +30,7 @@ class VirtualFTDI : public VirtualUSBDevice {
 		bool                           loopback { false };
 		uint8_t                        gMode {0x00};
 		std::shared_ptr<FTInterface>   ft;
+		std::shared_ptr<JtagAna>       ana;
 		uint8_t                        portVal = 0x00;
 		uint8_t                        epOut {0x00};
 		uint8_t                        epIn  {0x00};
@@ -44,7 +46,7 @@ public:
 	{
 	}
 
-	virtual void addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t epIn);
+	virtual void addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t epIn, std::shared_ptr<JtagAna> ana = std::shared_ptr<JtagAna>());
 
 	using VirtualUSBDevice::_reply;
 
@@ -52,6 +54,5 @@ public:
         virtual void handleXfer(VirtualUSBDevice::Xfer&& xfer);
 	virtual void handleXferEP0(VirtualUSBDevice::Xfer&& xfer);
 	virtual void handleXferEPX(VirtualUSBDevice::Xfer&& xfer);
-	virtual void checkTapState(uint8_t cmd);
         virtual size_t _reply(const _Cmd& cmd, const void *data, size_t len, int32_t status = 0) override;
 };

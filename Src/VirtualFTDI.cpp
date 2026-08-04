@@ -1,13 +1,17 @@
 #include <VirtualFTDI.hpp>
+#ifdef HAVE_ANA
+#include <JtagAna.hpp>
+#endif
 
 using std::string;
 //using namespace Toastbox;
 using std::vector;
 
-void
-VirtualFTDI::checkTapState(uint8_t ftcmd)
-{
 #ifdef HAVE_ANA
+namespace {
+static void
+checkTapState(std::shared_ptr<JtagAna> ana, uint8_t ftcmd)
+{
 	JtagTap::State state = ana->getState();
 	switch ( state ) {
 		case JtagTap::State::ShiftDR:
@@ -20,9 +24,9 @@ VirtualFTDI::checkTapState(uint8_t ftcmd)
 			fflush(stdout);
 			throw RuntimeError("Unexpected TAP state %s, ftcmd 0x%02x", ana->toString(state).c_str(), ftcmd);
 	}
-#endif
 }
-
+}
+#endif
 
 void 
 VirtualFTDI::handleXferEP0(VirtualUSBDevice::Xfer&& xfer) {
@@ -167,7 +171,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 				got = channel->ft->mpsse(&channel->fragmentedTx[0], channel->fragmentedTxTotal, 7, FTInterface::ShiftOp::TDI, rsz ? &rep[pos] : nullptr, rsz);
 			}
 #ifdef HAVE_ANA
-			if ( ana ) {
+			if ( auto ana = channel->ana ) {
 				uint8_t bit = 0;
 				for ( size_t ii = 0; ii < channel->fragmentedTxTotal; ++ii ) {
 					for ( auto jj = 0; jj < 8; ++jj ) {
@@ -175,7 +179,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 						ana->nextState(0, bit,  0);
 					}
 				}
-				portVal = (bit<<1); // TMS = 0, TDI
+				channel->portVal = (bit<<1); // TMS = 0, TDI
 			}
 #endif
 			if ( channel->fragmentedTxHasRep ) {
@@ -241,7 +245,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 				channel->ft->setPortLevels(p);
 			}
 #ifdef HAVE_ANA
-			if ( ana ) {
+			if ( auto ana = channel->ana ) {
 				// TMS TDO TDI TCK
 				if ( !!(p & 1) ) {
 					if ( (p & 0xa) != (channel->portVal & 0xa) ) {
@@ -293,22 +297,22 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 				channel->ft->mpsse(tbuf, tsiz, xfer.data[cmdsz+1], tms, rbuf, rsiz);
 			}
 #ifdef HAVE_ANA
-			if ( ana ) {
+			if ( auto ana = channel->ana ) {
 				uint8_t hiBit = !!(xfer.data[cmdsz+2] & 0x80);
 				uint8_t bit;
 				for ( auto ii = 0; ii <= xfer.data[cmdsz + 1]; ++ii ) {
 					bit = !!(xfer.data[cmdsz + 2] & (1<<ii));
-					if ( tms >= 0 ) {
+					if ( static_cast<int>(tms) >= 0 ) {
 						ana->nextState( bit, hiBit, 0 );
 					} else {
-						checkTapState(ftcmd);
+						checkTapState(ana, ftcmd);
 						ana->nextState( 0, bit, 0 );
 					}
 				}
-				if ( tms >= 0 ) {
-					portVal = (bit << 3) | (hiBit << 1); // TMS, TDI
+				if ( static_cast<int>(tms) >= 0 ) {
+					channel->portVal = (bit << 3) | (hiBit << 1); // TMS, TDI
 				} else {
-					portVal = (bit << 1); // TDI, TMS = 0
+					channel->portVal = (bit << 1); // TDI, TMS = 0
 				}
 			}
 #endif
@@ -375,8 +379,8 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 				got = channel->ft->mpsse(tbuf, tsiz, 7, FTInterface::ShiftOp::TDI, rbuf, rsiz);
 			}
 #ifdef HAVE_ANA
-			if ( ana ) {
-				checkTapState(ftcmd);
+			if ( auto ana = channel->ana ) {
+				checkTapState(ana, ftcmd);
 				if ( !! (0x10 & ftcmd) ) {
 					uint8_t bit = 0;
 					for ( size_t ii = 0; ii < tsiz; ++ii ) {
@@ -385,12 +389,12 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 							ana->nextState(0, bit, 0);
 						}
 					}
-					portVal = (bit<<1); // TMS = 0, TDI
+					channel->portVal = (bit<<1); // TMS = 0, TDI
 				} else {
 					for ( auto ii = 0; ii < 8*xsiz; ++ii ) {
 						ana->nextState(0,0,0);
 					}
-					portVal = 0x00;
+					channel->portVal = 0x00;
 				}
 			}
 #endif
@@ -435,7 +439,7 @@ VirtualFTDI::handleXfer(VirtualUSBDevice::Xfer&& xfer) {
 }
 
 void
-VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t epIn)
+VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t epIn, std::shared_ptr<JtagAna> ana)
 {
 	auto l = getLock();
 	if ( _State::Idle != getState() ) {
@@ -449,6 +453,7 @@ VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t 
 	}
 	Channel ch;
 	ch.ft       = ft;
+	ch.ana      = ana;
 	ch.epIn     = epIn;
 	ch.epOut    = epOut;
 	ch.loopback = !ft; 
