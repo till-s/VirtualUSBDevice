@@ -2,6 +2,8 @@
 #include <thread>
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <unistd.h>
 #include <functional>
 #include <optional>
 #include <cassert>
@@ -235,6 +237,7 @@ private:
         size_t off = 0;
     };
     
+protected:
     struct _State {
         static constexpr uint8_t Idle               = 0;
         static constexpr uint8_t Started            = 1<<0;
@@ -242,6 +245,16 @@ private:
         static constexpr uint8_t WriteThreadRunning = 1<<2;
         static constexpr uint8_t Reset              = 1<<3;
     };
+
+    std::unique_lock<std::mutex> getLock() {
+        return std::unique_lock(_s.lock);
+    }
+
+    // should be called with lock held
+    uint8_t getState() {
+        return _s.state;
+    }
+private:
     
     USB::SetupRequest _GetSetupRequest(const _Cmd& cmd) const {
         using namespace Endian;
