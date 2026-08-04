@@ -1,6 +1,7 @@
 #pragma once
 #include <thread>
 #include <cerrno>
+#include <cstdio>
 #include <functional>
 #include <optional>
 #include <cassert>
@@ -195,6 +196,35 @@ public:
         auto lock = std::unique_lock(_s.lock);
         return _s.err;
     }
+
+    void setDebug(int level) {
+        _dbg = level;
+    }
+
+    int getDebug() {
+        return _dbg;
+    }
+
+    FILE *getDebugFile() {
+        return _dbgf;
+    }
+
+    virtual int
+    dprintf(int lvl, const char *fmt, ...) {
+        va_list ap;
+        va_start(ap, fmt);
+        int st = getDebug() > lvl ? vfprintf(getDebugFile(), fmt, ap) : 0;
+        va_end(ap);
+        return st;
+    }
+
+    void setDebugFile(FILE *f) {
+        if ( f ) {
+            _dbgf = f;
+        } else {
+            setDebug(0);
+        }
+    }
     
 private:
     static constexpr uint8_t _DeviceID = 1;
@@ -376,7 +406,7 @@ private:
         _s.signal.notify_all();
         lock.unlock();
         
-        printf("VirtualUSBDevice: _readThread() exiting\n");
+        dprintf(1, "VirtualUSBDevice: _readThread() exiting\n");
     }
     
     void _writeThread() {
@@ -419,14 +449,22 @@ private:
         _s.signal.notify_all();
         lock.unlock();
         
-        printf("VirtualUSBDevice: _writeThread() exiting\n");
+        dprintf(1, "VirtualUSBDevice: _writeThread() exiting\n");
+    }
+
+protected:
+    virtual size_t _reply(const _Cmd& cmd, const void *data, size_t len, int32_t status = 0) {
+        std::vector<std::pair<const void *, size_t>> sg;
+        sg.push_back({data,len});
+        return _reply(cmd, sg, status);
     }
     
     // _s.lock must be held
-    void _reply(const _Cmd& cmd, const void* data, size_t len, int32_t status=0) {
+    virtual size_t _reply(const _Cmd& cmd, const std::vector<std::pair<const void *, size_t>> &sg,  int32_t status=0) {
         using namespace Endian;
         
         _Rep rep;
+        size_t len = 0;
         switch (cmd.header.base.command) {
         case USBIPLib::USBIP_CMD_SUBMIT: {
             // Validate our arguments for SUBMIT replies:
@@ -434,17 +472,28 @@ private:
             //     (data!=null), or we're not sending data (len==0)
             //   - For OUT transfers, we can't respond with any data, but the `len` argument is used
             //     to populate `actual_length` -- the amount of data sent to the device
-            assert(
-                (cmd.header.base.direction==USBIPLib::USBIP_DIR_IN && ((len && data) || !len)) ||
-                (cmd.header.base.direction==USBIPLib::USBIP_DIR_OUT && !data)
-            );
+            if ( cmd.header.base.direction==USBIPLib::USBIP_DIR_IN ) {
+                for ( auto it = sg.begin(); it != sg.end(); ++it ) {
+                   assert( ! it->second || (it->second && it->first) );
+                   len += it->second;
+                }
+	    } else if ( cmd.header.base.direction==USBIPLib::USBIP_DIR_OUT ) {
+		assert( sg.size() == 1 && ! sg[0].first );
+                len += sg[0].second;
+	    }
             
             std::unique_ptr<uint8_t[]> payload;
             size_t payloadLen = 0;
             if (cmd.header.base.direction==USBIPLib::USBIP_DIR_IN && len) {
                 payloadLen = len;
                 payload = std::make_unique<uint8_t[]>(payloadLen);
-                memcpy(payload.get(), data, payloadLen);
+                uint8_t *data = payload.get();
+                for ( auto it = sg.begin(); it != sg.end(); ++it ) {
+                    if ( it->second ) {
+                        memcpy(data, it->first, it->second);
+                        data += it->second;
+                    }
+                }
             }
             
             rep = {
@@ -498,7 +547,10 @@ private:
         
         _s.reps.push_back(std::move(rep));
         _s.signal.notify_all();
+        return len;
     }
+
+private:
     
     std::optional<Xfer> _handleCmd(_Cmd& cmd) {
         switch (cmd.header.base.command) {
@@ -519,7 +571,7 @@ private:
     }
     
     std::optional<Xfer> _handleCmdSubmitEP0(_Cmd& cmd) {
-        printf("_handleCmdSubmitOut\n");
+        dprintf(1, "_handleCmdSubmitEP0\n");
         const USB::SetupRequest setupReq = _GetSetupRequest(cmd);
         const bool standardType =
             (setupReq.bmRequestType & USB::RequestType::TypeMask) == USB::RequestType::TypeStandard;
@@ -561,7 +613,7 @@ private:
     }
     
     Xfer _handleCmdSubmitEPXOut(_Cmd& cmd) {
-//        printf("_handleCmdSubmitEPXOut\n");
+        dprintf(1, "_handleCmdSubmitEPXOut\n");
         const uint8_t epIdx = cmd.header.base.ep;
         if (epIdx >= USB::Endpoint::MaxCount) throw RuntimeError("invalid epIdx");
         
@@ -575,8 +627,8 @@ private:
     }
     
     void _handleCmdSubmitEPXIn(_Cmd& cmd) {
-//        printf("_handleCmdSubmitEPXIn\n");
         const uint8_t epIdx = cmd.header.base.ep;
+        dprintf(1, "_handleCmdSubmitEPXIn\n");
         if (epIdx >= USB::Endpoint::MaxCount) throw RuntimeError("invalid epIdx");
         auto& epInCmds = _s.inCmds[epIdx];
         epInCmds.push_back(std::move(cmd));
@@ -586,6 +638,7 @@ private:
     void _sendDataForInEndpoint(uint8_t epIdx) {
         auto& epInCmds = _s.inCmds[epIdx];
         auto& epInData = _s.inData[epIdx];
+	dprintf(1, "_sendDataForInEndpoint 0x%02x\n", epIdx);
         
         // Send data while there's data requested and data available
         while (!epInCmds.empty() && !epInData.empty()) {
@@ -594,9 +647,7 @@ private:
             // Limit the length of data to send by the length requested (transfer_buffer_length),
             // or the length available, whichever is smaller
             const size_t len = std::min((size_t)cmd.header.cmd_submit.transfer_buffer_length, d.len-d.off);
-//            printf("_sendDataForInEndpoint for seqnum=%u\n", cmd.header.base.seqnum);
-            _reply(cmd, &d.data[d.off], len);
-            d.off += len;
+            d.off += _reply(cmd, &d.data[d.off], len);
             // Pop the command unconditionally
             epInCmds.pop_front();
             // Pop the data if we sent it all
@@ -607,8 +658,8 @@ private:
     }
     
     void _handleCmdUnlink(const _Cmd& cmd) {
-        printf("_handleCmdUnlink\n");
         const uint8_t epIdx = cmd.header.base.ep;
+        dprintf(1, "_handleCmdUnlink EP IDX %d\n", epIdx);
         if (epIdx >= USB::Endpoint::MaxCount) throw RuntimeError("invalid epIdx");
         
         // Remove the IN cmd from the endpoint's inCmds deque
@@ -625,7 +676,7 @@ private:
             if (found) break;
         }
         
-//        printf("UNLINK seqnum=%u: %d\n", cmd.header.cmd_unlink.seqnum, found);
+        dprintf(1, "UNLINK seqnum=%u: %d\n", cmd.header.cmd_unlink.seqnum, found);
         
         // status = -ECONNRESET on success
         const int32_t status = (found ? -ECONNRESET : 0);
@@ -635,7 +686,7 @@ private:
     // _s.lock must be held
     void _handleCmdSubmitEP0StandardRequest(const _Cmd& cmd, const USB::SetupRequest& req) {
         using namespace Endian;
-        printf("_handleCmdSubmitEP0StandardRequest\n");
+        dprintf(1, "_handleCmdSubmitEP0StandardRequest\n");
         
         // We only support requests to the device for now
         const uint8_t recipient = req.bmRequestType & USB::RequestType::RecipientMask;
@@ -647,7 +698,7 @@ private:
         case USBIPLib::USBIP_DIR_IN: {
             switch (req.bRequest) {
             case USB::Request::GetStatus: {
-                printf("USB::Request::GetStatus\n");
+                dprintf(1, "USB::Request::GetStatus\n");
                 if (!_s.configDesc) throw RuntimeError("no active configuration");
                 uint16_t reply = 0;
                 // If self-powered, bit 0 is 1
@@ -665,13 +716,13 @@ private:
                 
                 switch (descType) {
                 case USB::DescriptorType::Device:
-                    printf("USB::Request::GetDescriptor::Device\n");
+                    dprintf(1, "USB::Request::GetDescriptor::Device\n");
                     replyData = _info.deviceDesc;
                     replyDataLen = _DescLen(*_info.configDescs[descIdx]);
                     break;
                 
                 case USB::DescriptorType::Configuration:
-                    printf("USB::Request::GetDescriptor::Configuration\n");
+                    dprintf(1, "USB::Request::GetDescriptor::Configuration\n");
                     if (descIdx >= _info.configDescsCount)
                         throw RuntimeError("invalid Configuration descriptor index: %u", descIdx);
                     replyData = _info.configDescs[descIdx];
@@ -679,7 +730,7 @@ private:
                     break;
                 
                 case USB::DescriptorType::String:
-                    printf("USB::Request::GetDescriptor::String\n");
+                    dprintf(1, "USB::Request::GetDescriptor::String\n");
                     if (_info.stringDescs) {
                         if (descIdx >= _info.stringDescsCount)
                             throw RuntimeError("invalid String descriptor index: %u", descIdx);
@@ -689,7 +740,7 @@ private:
                     break;
                 
                 case USB::DescriptorType::DeviceQualifier:
-                    printf("USB::Request::GetDescriptor::DeviceQualifier\n");
+                    dprintf(1, "USB::Request::GetDescriptor::DeviceQualifier\n");
                     if (_info.deviceQualifierDesc) {
                         replyData = _info.deviceQualifierDesc;
                         replyDataLen = _DescLen(*_info.deviceQualifierDesc);
@@ -709,7 +760,7 @@ private:
             }
             
             case USB::Request::SetConfiguration: {
-                printf("USB::Request::SetConfiguration\n");
+                dprintf(1, "USB::Request::SetConfiguration\n");
                 const uint8_t configVal = (req.wValue&0x00FF)>>0;
                 
                 bool ok = false;
@@ -738,7 +789,7 @@ private:
             
             switch (req.bRequest) {
             case USB::Request::SetConfiguration: {
-                printf("USB::Request::SetConfiguration\n");
+                dprintf(1, "USB::Request::SetConfiguration\n");
                 const uint8_t configVal = (req.wValue&0x00FF)>>0;
                 
                 bool ok = false;
@@ -814,6 +865,11 @@ private:
         std::deque<_Cmd> inCmds[USB::Endpoint::MaxCount];
         std::deque<_Data> inData[USB::Endpoint::MaxCount];
     } _s = {};
+
+
+    // don't bother about thread safety
+    int _dbg {0};
+    FILE * _dbgf {stdout};
 
 #undef USB
 #undef RuntimeError
