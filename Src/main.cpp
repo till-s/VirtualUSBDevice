@@ -55,6 +55,7 @@ int main(int argc, char * const argv[]) {
     
     VirtualFTDI dev(deviceInfo);
     dev.addChannel( std::make_shared<FWAdapter>( emulDev ), Endpoint::Out2, Endpoint::In1 );
+    dev.addChannel( std::shared_ptr<FWAdapter>(),           Endpoint::Out4, Endpoint::In3 );
 
     try {
         try {

@@ -442,6 +442,12 @@ VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t 
 	if ( _State::Idle != getState() ) {
 		throw RuntimeError("VirtualFTDI::addChannel can only be called on an idle device");
 	}
+	if ( !! (epOut & USB::Endpoint::DirectionIn) ) {
+		throw RuntimeError("VirtualFTDI::addChannel OUT-endpoint has wrong direction!?");
+	}
+	if ( ! (epIn  & USB::Endpoint::DirectionIn) ) {
+		throw RuntimeError("VirtualFTDI::addChannel IN-endpoint has wrong direction!?");
+	}
 	Channel ch;
 	ch.ft       = ft;
 	ch.epIn     = epIn;
