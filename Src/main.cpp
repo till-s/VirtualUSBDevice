@@ -28,16 +28,27 @@ public:
 	}
 };
 
+static void
+usage(const char *nm) {
+	printf("usage: %s [-gh] [-d ACM_device]\n", nm);
+	printf(" -g         : increment debug level (can be given multiple times)\n");
+	printf(" -h         : print this message\n");
+	printf(" -d dev     : select ttyACM device with MPSSE emulation\n");
+}
+
 int main(int argc, char * const argv[]) {
     const char *emulDev = "/dev/ttyACM0";
+    int         dbgLvl  = 0;
 //    const char *serialNo1 = "TS9D9HD5B";
 //    const char *serialNo2 = "FT6WW2FJA";
 
     int opt;
 
-    while ( (opt = getopt(argc, argv, "d:")) > 0 ) {
+    while ( (opt = getopt(argc, argv, "d:gh")) > 0 ) {
 	    switch ( opt ) {
 		case 'd': emulDev = optarg; break;
+		case 'g': ++dbgLvl;         break;
+		case 'h': usage(argv[0]);   return 0;
 		default:
 			  throw RuntimeError("Unsupported option -%c", opt);
 	    }
@@ -56,6 +67,7 @@ int main(int argc, char * const argv[]) {
     VirtualFTDI dev(deviceInfo);
     dev.addChannel( std::make_shared<FWAdapter>( emulDev ), Endpoint::Out2, Endpoint::In1 );
     dev.addChannel( std::shared_ptr<FWAdapter>(),           Endpoint::Out4, Endpoint::In3 );
+    dev.setDebug( dbgLvl );
 
     try {
         try {

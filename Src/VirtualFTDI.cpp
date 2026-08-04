@@ -32,11 +32,11 @@ VirtualFTDI::handleXferEP0(VirtualUSBDevice::Xfer&& xfer) {
     uint8_t buf[64];
     size_t repLen = 0;
 
-   	printf("RequestType 0x%02x\n", req.bmRequestType);
-	printf("request     0x%02x\n", req.bRequest);
-	printf("index       0x%04x\n", req.wIndex);
-	printf("value       0x%04x\n", req.wValue);
-	printf("length      0x%04x\n", req.wLength);
+    dprintf(0, "RequestType 0x%02x\n", req.bmRequestType);
+    dprintf(0, "request     0x%02x\n", req.bRequest);
+    dprintf(0, "index       0x%04x\n", req.wIndex);
+    dprintf(0, "value       0x%04x\n", req.wValue);
+    dprintf(0, "length      0x%04x\n", req.wLength);
  
     // Verify that this request is a `Class` request
     if ((req.bmRequestType&USB::RequestType::TypeMask) != USB::RequestType::TypeVendor) {
@@ -81,7 +81,7 @@ VirtualFTDI::handleXferEP0(VirtualUSBDevice::Xfer&& xfer) {
         switch (req.bRequest) {
             case 0x05: // get modem stat
 	    {
-            printf("GET_MODEM_STAT\n");
+            dprintf(2,"GET_MODEM_STAT\n");
 	    repLen = 2;
 	    buf[0] = 0x02; //  0x32 FT232H
 	    buf[1] = 0x60;
@@ -135,18 +135,18 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 
     for (auto channel = _channels.begin(); channel != _channels.end(); ++channel) {
       if ( xfer.ep == channel->epOut ) {
-        printf("Endpoint::%02x: <", xfer.ep);
+        dprintf(1, "Endpoint::%02x: <", xfer.ep);
         for (size_t i=0; i<xfer.len; i++) {
-            printf(" %02x", xfer.data[i]);
+            dprintf(1, " %02x", xfer.data[i]);
         }
-        printf(" >\n\n");
+        dprintf(1, " >\n\n");
 	if ( xfer.len < 1 ) {
             throw RuntimeError("invalid FT command\n");
 	}
 	if ( channel->fragmentedTx.size() > 0 ) {
 		channel->mustbeMPSSE();
 		size_t missing = channel->fragmentedTxTotal - channel->fragmentedTx.size();
-		printf("Second part of fragment: tot %zd, mising %zd, len %zd\n", channel->fragmentedTxTotal, missing, xfer.len);
+		dprintf(1, "Second part of fragment: tot %zd, mising %zd, len %zd\n", channel->fragmentedTxTotal, missing, xfer.len);
 		while ( cmdsz < xfer.len && cmdsz < missing ) {
 			channel->fragmentedTx.push_back( xfer.data[cmdsz] );
 			cmdsz++;
@@ -188,7 +188,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 	const uint8_t ftcmd = xfer.data[cmdsz];
 	switch ( ftcmd )  {
 		case 0x00:
-			printf("OP 0x00 IGNORED (efx)\n");
+			dprintf(0, "OP 0x00 IGNORED (efx)\n");
 			cmdsz++;
 		break;
 		case 0xaa:
@@ -339,7 +339,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 			uint8_t *rbuf = nullptr;
 			uint8_t *tbuf = nullptr;
 
-			printf("processing ftcmd 0x%02x, xfer len %zu, cmdsz %zu, xsiz %u\n", ftcmd, xfer.len, cmdsz, xsiz);
+			dprintf(2, "processing ftcmd 0x%02x, xfer len %zu, cmdsz %zu, xsiz %u\n", ftcmd, xfer.len, cmdsz, xsiz);
 
 			if ( !! (0x20 & ftcmd) ) {
 				rep.resize(pos + xsiz);
@@ -351,7 +351,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 				tsiz = xsiz;
 				if ( cmdsz + 3 + tsiz > xfer.len ) {
 					cmdsz += 3;
-					printf("Buffer fragmented: xfer.len %zd, pos %zd, tsiz %zd", xfer.len, cmdsz, tsiz);
+					dprintf(2, "Buffer fragmented: xfer.len %zd, pos %zd, tsiz %zd", xfer.len, cmdsz, tsiz);
 					channel->fragmentedTxTotal  = tsiz;
 					channel->fragmentedTxHasRep = !!rsiz;
 					while ( cmdsz < xfer.len ) {
@@ -387,7 +387,6 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 					}
 					portVal = (bit<<1); // TMS = 0, TDI
 				} else {
-					printf("Read-shift %d\n", 8*xsiz);
 					for ( auto ii = 0; ii < 8*xsiz; ++ii ) {
 						ana->nextState(0,0,0);
 					}
@@ -409,12 +408,12 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 	}
 	}
 	if ( rep.size() > 2 || sendStatus ) {
-	        printf("Endpoint::In1: <");
+	        dprintf(0, "Endpoint::In1: <");
                 static constexpr const size_t skip = 2;
 		for (size_t i=skip; i<rep.size(); i++) {
-	            printf(" %02x", rep[i]);
+	            dprintf(0, " %02x", rep[i]);
 	        }
-	        printf(" >\n\n");
+	        dprintf(0, " >\n\n");
 		write( channel->epIn, &rep[0] + skip, rep.size() - skip );
 	}
     	fflush(stdout);
