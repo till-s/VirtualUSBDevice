@@ -2,6 +2,8 @@
 #include <thread>
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <unistd.h>
 #include <functional>
 #include <optional>
 #include <cassert>
