@@ -861,7 +861,9 @@ private:
         }
     }
     
+protected:
     const Info _info = {};
+private:
     
     struct {
         std::mutex lock; // Struct should only be accessed while holding lock
