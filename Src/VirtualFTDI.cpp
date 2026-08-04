@@ -4,7 +4,7 @@
 #endif
 
 using std::string;
-//using namespace Toastbox;
+using namespace Toastbox::USB;
 using std::vector;
 
 #ifdef HAVE_ANA
@@ -138,7 +138,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
     bool sendStatus = false;
 
     for (auto channel = _channels.begin(); channel != _channels.end(); ++channel) {
-      if ( xfer.ep == channel->epOut ) {
+      if ( xfer.ep == channel->epOut->bEndpointAddress ) {
         dprintf(1, "Endpoint::%02x: <", xfer.ep);
         for (size_t i=0; i<xfer.len; i++) {
             dprintf(1, " %02x", xfer.data[i]);
@@ -418,7 +418,7 @@ VirtualFTDI::handleXferEPX(VirtualUSBDevice::Xfer&& xfer) {
 	            dprintf(0, " %02x", rep[i]);
 	        }
 	        dprintf(0, " >\n\n");
-		write( channel->epIn, &rep[0] + skip, rep.size() - skip );
+		write( channel->epIn->bEndpointAddress, &rep[0] + skip, rep.size() - skip );
 	}
     	fflush(stdout);
 	return;
@@ -438,6 +438,22 @@ VirtualFTDI::handleXfer(VirtualUSBDevice::Xfer&& xfer) {
     }
 }
 
+static const EndpointDescriptor *scanForEPDesc(const ConfigurationDescriptor *d, uint8_t epAddr) {
+    ssize_t totalLength = d ? d->wTotalLength : 0;
+    ssize_t maxOff      = totalLength - sizeof(EndpointDescriptor);
+    ssize_t off         = 0;
+    EndpointDescriptor *e;
+    for ( off = 0; off <= maxOff; off += e->bLength ) {
+	    e = reinterpret_cast<EndpointDescriptor*>( reinterpret_cast<uintptr_t>(d) + off );
+	    if ( DescriptorType::Endpoint == e->bDescriptorType ) {
+		    if ( epAddr == e->bEndpointAddress ) {
+			    return e;
+		    }
+	    }
+    }
+    return nullptr;
+}
+
 void
 VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t epIn, std::shared_ptr<JtagAna> ana)
 {
@@ -451,11 +467,19 @@ VirtualFTDI::addChannel(std::shared_ptr<FTInterface> ft, uint8_t epOut, uint8_t 
 	if ( ! (epIn  & USB::Endpoint::DirectionIn) ) {
 		throw RuntimeError("VirtualFTDI::addChannel IN-endpoint has wrong direction!?");
 	}
+	if ( _info.configDescsCount != 1 ) {
+		throw RuntimeError("VirtualFTDI::addChannel multiple configurations not supported ATM");
+		// would have to wait until a configuration is selected
+	}
 	Channel ch;
 	ch.ft       = ft;
 	ch.ana      = ana;
-	ch.epIn     = epIn;
-	ch.epOut    = epOut;
+	if ( ! (ch.epIn = scanForEPDesc(_info.configDescs[0], epIn)) ) {
+		throw RuntimeError("VirtualFTDI::addChannel EP 0x%02x not found in descriptors\n", epIn);
+	}
+	if ( ! (ch.epOut = scanForEPDesc(_info.configDescs[0], epOut)) ) {
+		throw RuntimeError("VirtualFTDI::addChannel EP 0x%02x not found in descriptors\n", epIn);
+	}
 	ch.loopback = !ft; 
 	_channels.push_back(ch);
 }
@@ -467,7 +491,7 @@ VirtualFTDI::run() {
         handleXfer(std::move(data));
 	for ( auto channel = _channels.begin(); channel != _channels.end(); ++channel ) {
 		if ( channel->sendModemStatus ) {
-			write(channel->epIn, nullptr, 0);
+			write(channel->epIn->bEndpointAddress, nullptr, 0);
 			channel->sendModemStatus = false;
 		}
 	}
@@ -476,13 +500,19 @@ VirtualFTDI::run() {
 
 size_t
 VirtualFTDI::_reply(const _Cmd& cmd, const void *data, size_t len, int32_t status) {
+    // The FTDI sends modem status at the beginning of each USB packet; If 'len'
+    // spans multiple packets we must insert the modem status because libftd2xx removes
+    // it.
+    // This is the appropriate place to hack this because at a higher level it is
+    // not known how the data will be broken into 'transfers' which correspond
+    // to URBs. The transfer size is only known here...
     std::vector<std::pair<const void *, size_t>> sg;
     const uint8_t ep = cmd.header.base.ep | USB::Endpoint::DirectionIn;
     for ( auto channel = _channels.begin(); channel != _channels.end(); ++channel ) {
-        if ( channel->epIn == ep ) {
+        if ( channel->epIn->bEndpointAddress == ep ) {
         static constexpr const uint8_t hdr[2] = {0x32, 0x00};
-        static constexpr const size_t pktsz = 512;
-        static constexpr const size_t chunksz = 512 - sizeof(hdr);
+        const size_t pktsz = channel->epIn->wMaxPacketSize;
+        const size_t chunksz =pktsz - sizeof(hdr);
         const auto q = std::ldiv((size_t)cmd.header.cmd_submit.transfer_buffer_length, pktsz);
         // max. payload length
         const size_t maxlen = q.quot * chunksz + ((size_t)q.rem > sizeof(hdr) ? q.rem - sizeof(hdr) : 0);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <VirtualUSBDevice.h>
+#include <Toastbox/USB.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -22,19 +23,18 @@ class JtagAna;
 class VirtualFTDI : public VirtualUSBDevice {
 
 	struct Channel {
-		static constexpr const uint8_t MODE_MPSSE = 0x02;
-		bool                           sendModemStatus {false};
-		vector<uint8_t>                fragmentedTx;
-		size_t                         fragmentedTxTotal {0};
-		bool                           fragmentedTxHasRep { false };
-		bool                           loopback { false };
-		uint8_t                        gMode {0x00};
-		std::shared_ptr<FTInterface>   ft;
-		std::shared_ptr<JtagAna>       ana;
-		uint8_t                        portVal = 0x00;
-		uint8_t                        epOut {0x00};
-		uint8_t                        epIn  {0x00};
-
+		static constexpr const uint8_t           MODE_MPSSE = 0x02;
+		bool                                     sendModemStatus {false};
+		vector<uint8_t>                          fragmentedTx;
+		size_t                                   fragmentedTxTotal {0};
+		bool                                     fragmentedTxHasRep { false };
+		bool                                     loopback { false };
+		uint8_t                                  gMode {0x00};
+		std::shared_ptr<FTInterface>             ft;
+		std::shared_ptr<JtagAna>                 ana;
+		uint8_t                                  portVal = 0x00;
+		const Toastbox::USB::EndpointDescriptor *epIn;
+		const Toastbox::USB::EndpointDescriptor *epOut;
 		void mustbeMPSSE();
 	};
 
