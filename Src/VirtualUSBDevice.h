@@ -420,13 +420,20 @@ private:
         lock.unlock();
         
         printf("VirtualUSBDevice: _writeThread() exiting\n");
+
+protected:
+    virtual size_t _reply(const _Cmd& cmd, const void *data, size_t len, int32_t status = 0) {
+        std::vector<std::pair<const void *, size_t>> sg;
+        sg.push_back({data,len});
+        return _reply(cmd, sg, status);
     }
     
     // _s.lock must be held
-    void _reply(const _Cmd& cmd, const void* data, size_t len, int32_t status=0) {
+    virtual size_t _reply(const _Cmd& cmd, const std::vector<std::pair<const void *, size_t>> &sg,  int32_t status=0) {
         using namespace Endian;
         
         _Rep rep;
+        size_t len = 0;
         switch (cmd.header.base.command) {
         case USBIPLib::USBIP_CMD_SUBMIT: {
             // Validate our arguments for SUBMIT replies:
@@ -434,17 +441,28 @@ private:
             //     (data!=null), or we're not sending data (len==0)
             //   - For OUT transfers, we can't respond with any data, but the `len` argument is used
             //     to populate `actual_length` -- the amount of data sent to the device
-            assert(
-                (cmd.header.base.direction==USBIPLib::USBIP_DIR_IN && ((len && data) || !len)) ||
-                (cmd.header.base.direction==USBIPLib::USBIP_DIR_OUT && !data)
-            );
+            if ( cmd.header.base.direction==USBIPLib::USBIP_DIR_IN ) {
+                for ( auto it = sg.begin(); it != sg.end(); ++it ) {
+                   assert( ! it->second || (it->second && it->first) );
+                   len += it->second;
+                }
+	    } else if ( cmd.header.base.direction==USBIPLib::USBIP_DIR_OUT ) {
+		assert( sg.size() == 1 && ! sg[0].first );
+                len += sg[0].second;
+	    }
             
             std::unique_ptr<uint8_t[]> payload;
             size_t payloadLen = 0;
             if (cmd.header.base.direction==USBIPLib::USBIP_DIR_IN && len) {
                 payloadLen = len;
                 payload = std::make_unique<uint8_t[]>(payloadLen);
-                memcpy(payload.get(), data, payloadLen);
+                uint8_t *data = payload.get();
+                for ( auto it = sg.begin(); it != sg.end(); ++it ) {
+                    if ( it->second ) {
+                        memcpy(data, it->first, it->second);
+                        data += it->second;
+                    }
+                }
             }
             
             rep = {
@@ -498,7 +516,10 @@ private:
         
         _s.reps.push_back(std::move(rep));
         _s.signal.notify_all();
+        return len;
     }
+
+private:
     
     std::optional<Xfer> _handleCmd(_Cmd& cmd) {
         switch (cmd.header.base.command) {
@@ -595,8 +616,7 @@ private:
             // or the length available, whichever is smaller
             const size_t len = std::min((size_t)cmd.header.cmd_submit.transfer_buffer_length, d.len-d.off);
 //            printf("_sendDataForInEndpoint for seqnum=%u\n", cmd.header.base.seqnum);
-            _reply(cmd, &d.data[d.off], len);
-            d.off += len;
+            d.off += _reply(cmd, &d.data[d.off], len);
             // Pop the command unconditionally
             epInCmds.pop_front();
             // Pop the data if we sent it all
