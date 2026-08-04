@@ -139,4 +139,6 @@ const USB::StringDescriptor* Strings[] = {
 namespace Endpoint {
     constexpr uint8_t In1    = 0x81;
     constexpr uint8_t Out2   = 0x02;
+    constexpr uint8_t In3    = 0x83;
+    constexpr uint8_t Out4   = 0x04;
 } // namespace Endpoint
