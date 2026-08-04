@@ -16,11 +16,11 @@ constexpr USB::DeviceDescriptor Device = {
     .bDeviceProtocol        = LFH_U8(0x00),
     .bMaxPacketSize0        = LFH_U8(0x10),
     .idVendor               = LFH_U16(0x0403),
-    .idProduct              = LFH_U16(0x6014),
-    .bcdDevice              = LFH_U16(0x0900),
+    .idProduct              = LFH_U16(0x6010), // 6010: 2232H, 6014: 232H
+    .bcdDevice              = LFH_U16(0x0700), // 0600: 2232H, 0900: 232H -> lattice programmer needs 0700
     .iManufacturer          = LFH_U8(0x01), // String1
     .iProduct               = LFH_U8(0x02), // String2
-    .iSerialNumber          = LFH_U8(0x00),
+    .iSerialNumber          = LFH_U8(0x04), // String4
     .bNumConfigurations     = LFH_U8(0x01),
 };
 
@@ -41,6 +41,9 @@ struct Configuration {
     USB::InterfaceDescriptor iface0Desc;
         USB::EndpointDescriptor epIn1Desc;
         USB::EndpointDescriptor epOut2Desc;
+    USB::InterfaceDescriptor iface1Desc;
+        USB::EndpointDescriptor epIn3Desc;
+        USB::EndpointDescriptor epOut4Desc;
 } __attribute__((packed));
 
 constexpr Configuration Configuration = {
@@ -48,7 +51,7 @@ constexpr Configuration Configuration = {
         .bLength                        = LFH_U8(sizeof(USB::ConfigurationDescriptor)),
         .bDescriptorType                = LFH_U8(USB::DescriptorType::Configuration),
         .wTotalLength                   = LFH_U16(sizeof(Configuration)),
-        .bNumInterfaces                 = LFH_U8(0x01),
+        .bNumInterfaces                 = LFH_U8(0x02),
         .bConfigurationValue            = LFH_U8(0x01),
         .iConfiguration                 = LFH_U8(0x00),
         .bmAttributes                   = LFH_U8(0x80),
@@ -64,7 +67,7 @@ constexpr Configuration Configuration = {
             .bInterfaceClass            = LFH_U8(0xff), // Communication Interface Class
             .bInterfaceSubClass         = LFH_U8(0xff), // Abstract Control Model
             .bInterfaceProtocol         = LFH_U8(0xff), // Common AT commands
-            .iInterface                 = LFH_U8(0x00),
+            .iInterface                 = LFH_U8(0x02),
         },
             .epIn1Desc = {
                 .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
@@ -83,6 +86,34 @@ constexpr Configuration Configuration = {
                 .wMaxPacketSize         = LFH_U16(0x0200),
                 .bInterval              = LFH_U8(0x00),
             },
+        .iface1Desc = {
+            .bLength                    = LFH_U8(sizeof(USB::InterfaceDescriptor)),
+            .bDescriptorType            = LFH_U8(USB::DescriptorType::Interface),
+            .bInterfaceNumber           = LFH_U8(0x01),
+            .bAlternateSetting          = LFH_U8(0x00),
+            .bNumEndpoints              = LFH_U8(0x02),
+            .bInterfaceClass            = LFH_U8(0xff), // Communication Interface Class
+            .bInterfaceSubClass         = LFH_U8(0xff), // Abstract Control Model
+            .bInterfaceProtocol         = LFH_U8(0xff), // Common AT commands
+            .iInterface                 = LFH_U8(0x02),
+        },
+            .epIn3Desc = {
+                .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
+                .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
+                .bEndpointAddress       = LFH_U8(0x83),
+                .bmAttributes           = LFH_U8(0x02),
+                .wMaxPacketSize         = LFH_U16(0x0200),
+                .bInterval              = LFH_U8(0x00),
+            },
+        
+            .epOut4Desc = {
+                .bLength                = LFH_U8(sizeof(USB::EndpointDescriptor)),
+                .bDescriptorType        = LFH_U8(USB::DescriptorType::Endpoint),
+                .bEndpointAddress       = LFH_U8(0x04),
+                .bmAttributes           = LFH_U8(0x02),
+                .wMaxPacketSize         = LFH_U16(0x0200),
+                .bInterval              = LFH_U8(0x00),
+            },
 };
 
 const USB::ConfigurationDescriptor* Configurations[] = {
@@ -90,15 +121,17 @@ const USB::ConfigurationDescriptor* Configurations[] = {
 };
 
 constexpr auto String0 = USB::SupportedLanguagesDescriptorMake({0x0409});
-constexpr auto String1 = USB::StringDescriptorMake("ManufacturerString");
-constexpr auto String2 = USB::StringDescriptorMake("ProductString");
+constexpr auto String1 = USB::StringDescriptorMake("FTDI");
+constexpr auto String2 = USB::StringDescriptorMake("USB <-> Serial Converter");
 constexpr auto String3 = USB::StringDescriptorMake("InterfaceString");
+constexpr auto String4 = USB::StringDescriptorMake("TS9D9HD5");
 
 const USB::StringDescriptor* Strings[] = {
     (USB::StringDescriptor*)&String0,
     (USB::StringDescriptor*)&String1,
     (USB::StringDescriptor*)&String2,
     (USB::StringDescriptor*)&String3,
+    (USB::StringDescriptor*)&String4,
 };
 
 } // namespace Descriptor
@@ -106,5 +139,4 @@ const USB::StringDescriptor* Strings[] = {
 namespace Endpoint {
     constexpr uint8_t In1    = 0x81;
     constexpr uint8_t Out2   = 0x02;
-    constexpr uint8_t In2    = 0x82;
 } // namespace Endpoint
