@@ -46,11 +46,15 @@ public:
         std::unique_ptr<uint8_t[]> data;
         size_t len = 0;
     };
+
+    using _Clock = std::chrono::steady_clock;
+    using _TS = std::chrono::time_point<_Clock>;
     
     struct _Cmd {
         USBIP::HEADER header = {};
         std::unique_ptr<uint8_t[]> payload = {};
         size_t payloadLen = 0;
+        _TS timestamp;
     };
     
     using _Rep = _Cmd;
@@ -215,6 +219,16 @@ public:
         return _dbgf;
     }
 
+    // if we have no data then reply to an IN transaction
+    // with an empty reply after this timeout (0 -> timeout disabled)
+    void setInTimeout(std::chrono::milliseconds d) {
+        std::unique_lock( _s.lock );
+        if ( _s.state != _State::Idle ) {
+            throw RuntimeError("setInTimeout() can only be called before start()");
+        }
+        _s.inCmdTimeout = d;
+    }
+
     virtual int
     dprintf(int lvl, const char *fmt, ...) {
         va_list ap;
@@ -310,6 +324,8 @@ private:
         using namespace Endian;
         _Cmd cmd;
         _Read(socket, &cmd.header, sizeof(cmd.header));
+
+        cmd.timestamp = _Clock::now();
         
         // Big endian -> host endian
         cmd.header.base = {
@@ -427,6 +443,17 @@ private:
         
         dprintf(1, "VirtualUSBDevice: _readThread() exiting\n");
     }
+
+    // must be called with lock held
+    std::deque<_Cmd> * oldestInCmd() {
+        std::deque<_Cmd> *found = nullptr;
+        for (std::deque<_Cmd>& deq : _s.inCmds) {
+            if ( ! deq.empty() && ( ! found || deq.front().timestamp < found->front().timestamp ) ) {
+                found = &deq;
+            }
+        }
+        return found;
+    }
     
     void _writeThread() {
         int socket = -1;
@@ -445,7 +472,27 @@ private:
                     // Break if a reply is available
                     if (!_s.reps.empty()) break;
                     // Otherwise wait to get signalled
+
+                    // ... but first find the oldest IN request for which no data have
+                    // been sent to the host yet.
+                    std::deque<_Cmd> *oldest;
+                    // if inCmdTimeout == 0 (disabled) then the pendingInCmds counter remains 0
+                    if ( _s.pendingInCmds && (oldest = oldestInCmd()) ) {
+                        _TS now = _Clock::now();
+                        // compute a timeout
+                        _TS timeout = oldest->front().timestamp + _s.inCmdTimeout;
+                        if ( timeout <= now ) {
+                            // expired; reply with an empty message
+                            _reply( oldest->front(), nullptr, 0 );
+                            oldest->pop_front();
+                            _s.pendingInCmds--;
+                        } else {
+                           // wake up after timeout and check again
+                           _s.wsignal.wait_until(lock, timeout);
+                        }
+                    } else {
                         _s.wsignal.wait(lock);
+                    }
                 }
                 
                 // Dequeue the reply
@@ -651,13 +698,21 @@ private:
         if (epIdx >= USB::Endpoint::MaxCount) throw RuntimeError("invalid epIdx");
         auto& epInCmds = _s.inCmds[epIdx];
         epInCmds.push_back(std::move(cmd));
-        _sendDataForInEndpoint(epIdx);
+        if ( _s.inCmdTimeout.count() ) {
+            // if there is infinite timeout (0) then clamp this counter at 0
+            _s.pendingInCmds++;
+        }
+        if ( ! _sendDataForInEndpoint(epIdx) && 1 == _s.pendingInCmds ) {
+            // just got an IN cmd; notify the writer so they can adjust the timeout
+            _s.wsignal.notify_all();
+        }
     }
     
-    void _sendDataForInEndpoint(uint8_t epIdx) {
+    bool _sendDataForInEndpoint(uint8_t epIdx) {
         auto& epInCmds = _s.inCmds[epIdx];
         auto& epInData = _s.inData[epIdx];
 	dprintf(1, "_sendDataForInEndpoint 0x%02x\n", epIdx);
+        bool sentSomething = false;
         
         // Send data while there's data requested and data available
         while (!epInCmds.empty() && !epInData.empty()) {
@@ -669,11 +724,16 @@ private:
             d.off += _reply(cmd, &d.data[d.off], len);
             // Pop the command unconditionally
             epInCmds.pop_front();
+            if ( _s.pendingInCmds ) {
+                _s.pendingInCmds--;
+            }
             // Pop the data if we sent it all
             if (d.off == d.len) {
                 epInData.pop_front();
             }
+            sentSomething = true;
         }
+        return sentSomething;
     }
     
     void _handleCmdUnlink(const _Cmd& cmd) {
@@ -688,6 +748,9 @@ private:
                 const _Cmd& inCmd = *it;
                 if (inCmd.header.base.seqnum == cmd.header.cmd_unlink.seqnum) {
                     deq.erase(it);
+                    if ( _s.pendingInCmds ) {
+                        _s.pendingInCmds--;
+                    }
                     found = true;
                     break;
                 }
@@ -886,9 +949,13 @@ private:
         std::deque<_Cmd> cmds;
         std::deque<_Cmd> reps;
         
+        unsigned pendingInCmds = 0;
+        std::chrono::milliseconds inCmdTimeout = std::chrono::milliseconds(200);
         std::deque<_Cmd> inCmds[USB::Endpoint::MaxCount];
         std::deque<_Data> inData[USB::Endpoint::MaxCount];
     } _s = {};
+
+    static constexpr const std::chrono::duration inCmdTimeout = std::chrono::milliseconds(2000);
 
 
     // don't bother about thread safety
