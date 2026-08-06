@@ -67,8 +67,12 @@ public:
     VirtualUSBDevice(const Info& info) : _info(info) {}
     
     ~VirtualUSBDevice() {
+	// must destroy with running threads (derived class already destroyed)
         auto lock = std::unique_lock(_s.lock);
-        _reset(lock, ErrStopped);
+        if (  !! (_s.state & (_State::ReadThreadRunning|_State::WriteThreadRunning)) ) {
+	    fprintf(stderr, "PROGRAMMING ERROR - must stop threads prior to ~VirtualUSBDevice\n");
+	    std::terminate();
+	}
     }
     
     void start() {
@@ -138,10 +142,10 @@ public:
                         return std::nullopt;
                     } else if (timeout == std::chrono::milliseconds::max()) {
                         // Wait forever
-                        _s.signal.wait(lock);
+                        _s.rsignal.wait(lock);
                     } else {
                         // Wait a specific amount of time
-                        const std::cv_status cr = _s.signal.wait_for(lock, timeout);
+                        const std::cv_status cr = _s.rsignal.wait_for(lock, timeout);
                         if (cr == std::cv_status::timeout) return std::nullopt;
                     }
                 }
@@ -400,11 +404,13 @@ private:
         
         try {
             for (;;) {
+                // Bail if there's an error (and therefore we're stopped)
+                if (_s.err) std::rethrow_exception(_s.err);
                 _Cmd cmd = _ReadCmd(socket);
                 
                 lock.lock();
                 _s.cmds.push_back(std::move(cmd));
-                _s.signal.notify_all();
+                _s.rsignal.notify_all();
                 lock.unlock();
             }
         
@@ -416,7 +422,7 @@ private:
         
         lock.lock();
         _s.state &= ~_State::ReadThreadRunning;
-        _s.signal.notify_all();
+        _s.ssignal.notify_all();
         lock.unlock();
         
         dprintf(1, "VirtualUSBDevice: _readThread() exiting\n");
@@ -439,7 +445,7 @@ private:
                     // Break if a reply is available
                     if (!_s.reps.empty()) break;
                     // Otherwise wait to get signalled
-                    _s.signal.wait(lock);
+                        _s.wsignal.wait(lock);
                 }
                 
                 // Dequeue the reply
@@ -459,7 +465,7 @@ private:
         
         lock.lock();
         _s.state &= ~_State::WriteThreadRunning;
-        _s.signal.notify_all();
+        _s.ssignal.notify_all();
         lock.unlock();
         
         dprintf(1, "VirtualUSBDevice: _writeThread() exiting\n");
@@ -559,7 +565,7 @@ protected:
         }
         
         _s.reps.push_back(std::move(rep));
-        _s.signal.notify_all();
+        _s.wsignal.notify_all();
         return len;
     }
 
@@ -835,7 +841,8 @@ private:
         if (_s.state & _State::Reset) return;
         _s.state |= _State::Reset;
         _s.err = err;
-        _s.signal.notify_all(); // Wake threads so they can observe `_s.err`
+        _s.wsignal.notify_all(); // Wake threads so they can observe `_s.err`
+        _s.rsignal.notify_all(); // Wake threads so they can observe `_s.err`
         
         auto sockets = {std::ref(_s.socket), std::ref(_s.usbipSocket)};
         
@@ -849,7 +856,7 @@ private:
         
         // Wait until the threads exit
         while (_s.state & (_State::ReadThreadRunning|_State::WriteThreadRunning)) {
-            _s.signal.wait(lock);
+            _s.ssignal.wait(lock);
         }
         
         // Close sockets now that the thread has exited
@@ -867,7 +874,9 @@ private:
     
     struct {
         std::mutex lock; // Struct should only be accessed while holding lock
-        std::condition_variable signal;
+        std::condition_variable rsignal;
+        std::condition_variable wsignal;
+        std::condition_variable ssignal;
         uint8_t state = _State::Idle;
         Err err;
         int socket = -1;
