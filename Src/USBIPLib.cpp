@@ -143,13 +143,13 @@ int read_usb_device(struct udev_device *sdev, struct usbip_usb_device *udev)
 {
     uint32_t busnum, devnum;
     const char *path, *name;
-    
+
 #define to_string(s) #s
 #define READ_ATTR(object, type, dev, name, format)                                \
     do {                                                                        \
         (object)->name = (type) read_attr_value(dev, to_string(name), format);  \
     } while (0)
-    
+
     READ_ATTR(udev, uint8_t, sdev, bDeviceClass, "%02x\n");
     READ_ATTR(udev, uint8_t, sdev, bDeviceSubClass, "%02x\n");
     READ_ATTR(udev, uint8_t, sdev, bDeviceProtocol, "%02x\n");
@@ -166,7 +166,7 @@ int read_usb_device(struct udev_device *sdev, struct usbip_usb_device *udev)
 
 #undef READ_ATTR
 #undef to_string
-   
+
     udev->speed = read_attr_speed(sdev);
 
     path = udev_device_get_syspath(sdev);

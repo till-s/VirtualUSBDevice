@@ -1,59 +1,129 @@
 #include <climits>
-#include <VirtualFTDI.hpp>
+#include "VirtualUSBDevice.h"
 #include "Descriptor.h"
-#include <Toastbox/RuntimeError.h>
-#include <string>
-#include <vector>
-#include <memory>
-#include <FTEmul.hpp>
-#include <JtagAna.hpp>
-#include <getopt.h>
-#include <time.h>
-
-using std::string;
+#include "Toastbox/RuntimeError.h"
 using namespace Toastbox;
-using namespace ftemul;
-using std::vector;
 
-class FWAdapter : public ftemul::FW, public FTInterface {
-public:
-	FWAdapter(const char *dev) : FW(dev) {}
+static USB::CDC::LineCoding _LineCoding = {};
 
-	virtual void setPortLevels(uint8_t l) override {
-		FW::setPortLevels(l);
-	}
+static struct {
+    std::mutex lock;
+    std::condition_variable signal;
+    bool dtePresent = false;
+} _State;
 
-        virtual ssize_t mpsse(const uint8_t *tbuf, size_t tsize, int bits, ShiftOp op = ShiftOp::TDI, uint8_t *rbuf = nullptr, size_t rsize = 0) override {
-		return FW::ft(tbuf, tsize, bits, static_cast<int>(op), rbuf, rsize);
-	}
-};
-
-static void
-usage(const char *nm) {
-	printf("usage: %s [-gh] [-d ACM_device]\n", nm);
-	printf(" -g         : increment debug level (can be given multiple times)\n");
-	printf(" -h         : print this message\n");
-	printf(" -d dev     : select ttyACM device with MPSSE emulation\n");
+static void _handleXferEP0(VirtualUSBDevice& dev, VirtualUSBDevice::Xfer&& xfer) {
+    const USB::SetupRequest req = xfer.setupReq;
+    const uint8_t* payload = xfer.data.get();
+    const size_t payloadLen = xfer.len;
+    
+    // Verify that this request is a `Class` request
+    if ((req.bmRequestType&USB::RequestType::TypeMask) != USB::RequestType::TypeClass)
+        throw RuntimeError("invalid request bmRequestType (TypeClass)");
+    
+    // Verify that the recipient is the `Interface`
+    if ((req.bmRequestType&USB::RequestType::RecipientMask) != USB::RequestType::RecipientInterface)
+        throw RuntimeError("invalid request bmRequestType (RecipientInterface)");
+    
+    switch (req.bmRequestType&USB::RequestType::DirectionMask) {
+    case USB::RequestType::DirectionOut:
+        switch (req.bRequest) {
+        case USB::CDC::Request::SET_LINE_CODING: {
+            if (payloadLen != sizeof(_LineCoding))
+                throw RuntimeError("SET_LINE_CODING: payloadLen doesn't match sizeof(USB::CDC::LineCoding)");
+            
+            memcpy(&_LineCoding, payload, sizeof(_LineCoding));
+            _LineCoding = {
+                .dwDTERate      = Endian::HFL_U32(_LineCoding.dwDTERate),
+                .bCharFormat    = Endian::HFL_U8(_LineCoding.bCharFormat),
+                .bParityType    = Endian::HFL_U8(_LineCoding.bParityType),
+                .bDataBits      = Endian::HFL_U8(_LineCoding.bDataBits),
+            };
+            
+            printf("SET_LINE_CODING:\n");
+            printf("  dwDTERate: %08x\n", _LineCoding.dwDTERate);
+            printf("  bCharFormat: %08x\n", _LineCoding.bCharFormat);
+            printf("  bParityType: %08x\n", _LineCoding.bParityType);
+            printf("  bDataBits: %08x\n", _LineCoding.bDataBits);
+            return;
+        }
+        
+        case USB::CDC::Request::SET_CONTROL_LINE_STATE: {
+            const bool dtePresent = req.wValue&1;
+            printf("SET_CONTROL_LINE_STATE:\n");
+            printf("  dtePresent=%d\n", dtePresent);
+            auto lock = std::unique_lock(_State.lock);
+            _State.dtePresent = dtePresent;
+            _State.signal.notify_all();
+            return;
+        }
+        
+        case USB::CDC::Request::SEND_BREAK: {
+            printf("SEND_BREAK:\n");
+            return;
+        }
+        
+        default:
+            throw RuntimeError("invalid request (DirectionOut): %x", req.bRequest);
+        }
+    
+    case USB::RequestType::DirectionIn:
+        switch (req.bRequest) {
+        case USB::CDC::Request::GET_LINE_CODING: {
+            printf("GET_LINE_CODING\n");
+            if (payloadLen != sizeof(_LineCoding))
+                throw RuntimeError("SET_LINE_CODING: payloadLen doesn't match sizeof(USB::CDC::LineCoding)");
+            dev.write(USB::Endpoint::DirectionIn|USB::Endpoint::Default, &_LineCoding, sizeof(_LineCoding));
+            return;
+        }
+        
+        default:
+            throw RuntimeError("invalid request (DirectionIn): %x", req.bRequest);
+        }
+    
+    default:
+        throw RuntimeError("invalid request direction");
+    }
 }
 
-int main(int argc, char * const argv[]) {
-    const char *emulDev = "/dev/ttyACM0";
-    int         dbgLvl  = 0;
-//    const char *serialNo1 = "TS9D9HD5B";
-//    const char *serialNo2 = "FT6WW2FJA";
-
-    int opt;
-
-    while ( (opt = getopt(argc, argv, "d:gh")) > 0 ) {
-	    switch ( opt ) {
-		case 'd': emulDev = optarg; break;
-		case 'g': ++dbgLvl;         break;
-		case 'h': usage(argv[0]);   return 0;
-		default:
-			  throw RuntimeError("Unsupported option -%c", opt);
-	    }
+static void _handleXferEPX(VirtualUSBDevice& dev, VirtualUSBDevice::Xfer&& xfer) {
+    switch (xfer.ep) {
+    case Endpoint::Out2: {
+        printf("Endpoint::Out2: <");
+        for (size_t i=0; i<xfer.len; i++) {
+            printf(" %02x", xfer.data[i]);
+        }
+        printf(" >\n\n");
+        break;
     }
+    
+    default:
+        throw RuntimeError("invalid endpoint: 0x%02x", xfer.ep);
+    }
+}
 
+static void _handleXfer(VirtualUSBDevice& dev, VirtualUSBDevice::Xfer&& xfer) {
+    // Endpoint 0
+    if (xfer.ep == 0) _handleXferEP0(dev, std::move(xfer));
+    // Other endpoints
+    else _handleXferEPX(dev, std::move(xfer));
+}
+
+static void _threadResponse(VirtualUSBDevice& dev) {
+    for (;;) {
+        auto lock = std::unique_lock(_State.lock);
+        while (!_State.dtePresent) {
+            _State.signal.wait(lock);
+        }
+        lock.unlock();
+        
+        const char text[1024] = "Testing 123\r\n";
+        dev.write(Endpoint::In2, text, sizeof(text));
+        usleep(500000);
+    }
+}
+
+int main(int argc, const char* argv[]) {
     const VirtualUSBDevice::Info deviceInfo = {
         .deviceDesc             = &Descriptor::Device,
         .deviceQualifierDesc    = &Descriptor::DeviceQualifier,
@@ -64,11 +134,7 @@ int main(int argc, char * const argv[]) {
         .throwOnErr             = true,
     };
     
-    VirtualFTDI dev(deviceInfo);
-    dev.addChannel( std::make_shared<FWAdapter>( emulDev ), Endpoint::Out2, Endpoint::In1 );
-    dev.addChannel( std::shared_ptr<FWAdapter>(),           Endpoint::Out4, Endpoint::In3 );
-    dev.setDebug( dbgLvl );
-
+    VirtualUSBDevice dev(deviceInfo);
     try {
         try {
             dev.start();
@@ -84,6 +150,10 @@ int main(int argc, char * const argv[]) {
         
         printf("Started\n");
         
+        std::thread([&] {
+            _threadResponse(dev);
+        }).detach();
+        
 //        // Test device teardown (after 5 seconds)
 //        std::thread([&] {
 //            sleep(5);
@@ -91,7 +161,10 @@ int main(int argc, char * const argv[]) {
 //            dev.stop();
 //        }).detach();
         
-	dev.run();
+        for (;;) {
+            VirtualUSBDevice::Xfer data = *dev.read();
+            _handleXfer(dev, std::move(data));
+        }
         
     } catch (const std::exception& e) {
         fprintf(stderr, "Error: %s\n", e.what());
