@@ -23,21 +23,6 @@ constexpr size_t MAX_STATUS_NAME = 18;
 constexpr char USBIP_VHCI_BUS_TYPE[] = "platform";
 constexpr char USBIP_VHCI_DEVICE_NAME[] = "vhci_hcd.0";
 
-#ifdef BOOX
-static void err(const char* str) {}
-
-template <typename ...Args>
-static void err(const char* fmt, Args&& ...args) {}
-
-template <typename ...Args>
-static void dbg(const char* fmt, Args&& ...args) {
-}
-
-static void BUG() {
-    abort();
-}
-#endif
-
 enum hub_speed {
     HUB_SPEED_HIGH = 0,
     HUB_SPEED_SUPER,
@@ -111,27 +96,6 @@ enum usb_device_speed {
     USB_SPEED_SUPER,            /* usb 3.0 */
     USB_SPEED_SUPER_PLUS,            /* usb 3.1 */
 };
-
-#ifdef BOOX
-struct speed_string {
-    int num;
-    const char *speed;
-    const char *desc;
-};
-
-static const struct speed_string speed_strings[] = {
-    { USB_SPEED_UNKNOWN, "unknown", "Unknown Speed"},
-    { USB_SPEED_LOW,  "1.5", "Low Speed(1.5Mbps)"  },
-    { USB_SPEED_FULL, "12",  "Full Speed(12Mbps)" },
-    { USB_SPEED_HIGH, "480", "High Speed(480Mbps)" },
-    { USB_SPEED_WIRELESS, "53.3-480", "Wireless"},
-    { USB_SPEED_SUPER, "5000", "Super Speed(5000Mbps)" },
-    { 0, NULL, NULL }
-};
-
-struct usbip_vhci_driver *vhci_driver;
-struct udev *udev_context;
-#endif
 
 int usbip_net_set_keepalive(int sockfd);
 
