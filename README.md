@@ -4,6 +4,19 @@
 
 The implementation relies on the `usbip` subsystem, but is self-contained and doesn't require the `usbip` utility to be manually invoked.
 
+## Features Introduced by This Fork
+
+ - fix speed guessing (PR submitted); must use bcdUSB, not bcdDevice
+ - use multiple locks (releaves contention)
+ - automatically reply to IN transactions with an empty packet after a (configurable) timeout.
+   Otherwise, if the virtual device has nothing to send there will simply be no reply and
+   the host will time out.  I found that some software (libftd2xx) does not handle such timeouts
+   gracefully.
+ - made some members protected in order to encourage subclassing.
+ - separated USBIPLib.h into .h and .cpp files. Otherwise, inclusion of the VirtualUSBDevice.h
+   from multiple .cpp files is not possible.
+ - added simple 'debug level' feature for enabling/disabling diagnostic messages.
+
 ## Creation
 
 To create a virtual USB device, instantiate a VirtualUSBDevice (supplying standard USB descriptors to the constructor), and call `start()`.
