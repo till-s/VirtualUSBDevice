@@ -207,15 +207,15 @@ public:
         return _s.err;
     }
 
-    void setDebug(int level) {
+    virtual void setDebug(int level) {
         _dbg = level;
     }
 
-    int getDebug() {
+    virtual int getDebug() {
         return _dbg;
     }
 
-    FILE *getDebugFile() {
+    virtual FILE *getDebugFile() {
         return _dbgf;
     }
 
@@ -233,12 +233,12 @@ public:
     dprintf(int lvl, const char *fmt, ...) {
         va_list ap;
         va_start(ap, fmt);
-        int st = getDebug() > lvl ? vfprintf(getDebugFile(), fmt, ap) : 0;
+        int st = (getDebug() & lvl) ? vfprintf(getDebugFile(), fmt, ap) : 0;
         va_end(ap);
         return st;
     }
 
-    void setDebugFile(FILE *f) {
+    virtual void setDebugFile(FILE *f) {
         if ( f ) {
             _dbgf = f;
         } else {
