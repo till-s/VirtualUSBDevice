@@ -222,7 +222,7 @@ public:
     // if we have no data then reply to an IN transaction
     // with an empty reply after this timeout (0 -> timeout disabled)
     void setInTimeout(std::chrono::milliseconds d) {
-        std::unique_lock( _s.lock );
+        auto lock = std::unique_lock( _s.lock );
         if ( _s.state != _State::Idle ) {
             throw RuntimeError("setInTimeout() can only be called before start()");
         }
